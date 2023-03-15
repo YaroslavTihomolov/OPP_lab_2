@@ -6,11 +6,11 @@
 
 constexpr auto t = 0.00001;
 constexpr auto e_pow_2 = 0.00001 * 0.00001;
-constexpr auto N = 2000;
+constexpr auto N = 15000;
 
 
 void MatrixMultiply(const double *buf, int lines, const double *x, double *tmp) {
-#pragma omp parallel for
+#pragma omp for
     for (int i = 0; i < lines; i++) {
         double sum = 0;
         for (int j = 0; j < N; j++) {
@@ -22,17 +22,17 @@ void MatrixMultiply(const double *buf, int lines, const double *x, double *tmp) 
 
 
 double Norma(const double *vector, int size) {
-    double tmp = 0;
-#pragma omp parallel for reduction(+:tmp)
+    double norm_sum = 0.0;
+#pragma omp parallel for reduction(+:norm_sum)
     for (int i = 0; i < size; i++) {
-        tmp += vector[i] * vector[i];
+        norm_sum += vector[i] * vector[i];
     }
-    return tmp;
+    return norm_sum;
 }
 
 
 void VectorDifference(const double *a_1, const double *a_2, int size, double *tmp) {
-#pragma omp parallel for
+#pragma omp for
     for (int i = 0; i < size; i++) {
         tmp[i] = a_1[i] - a_2[i];
     }
@@ -40,7 +40,7 @@ void VectorDifference(const double *a_1, const double *a_2, int size, double *tm
 
 
 void VectorMultiplyConst(const double *a_1, double value, int size, double *tmp) {
-#pragma omp parallel for
+#pragma omp for
     for (int i = 0; i < size; i++) {
         tmp[i] = a_1[i] * value;
     }
@@ -54,7 +54,6 @@ bool NormaCompare(double norma, double norma_b, const std::vector<double> &x) {
 
 void Run() {
     std::vector<double> A((long long) N * (long long) N);
-#pragma omp parallel for
     for (int i = 0; i < N; i++) {
         for (int j = 0; j < N; j++) {
             A[i * N + j] = (i == j) ? 2.0 : 1.0;
@@ -64,12 +63,12 @@ void Run() {
 
     std::vector<double> b(N);
     std::vector<double> x(N);
-
-#pragma omp parallel for
     for (int i = 0; i < N; i++) {
         b[i] = N + 1;
         x[i] = 0;
     }
+    float *norm_sum = (float *) malloc(sizeof(float));
+    *norm_sum = 0;
 
     double norma_b = Norma(b.data(), N);
 
@@ -77,18 +76,26 @@ void Run() {
     std::vector<double> new_x_part(N);
     std::vector<double> multiply_tmp_const(N);
 
-    while (true) {
-        MatrixMultiply(A.data(), N, x.data(), tmp.data());
-        VectorDifference(tmp.data(), b.data(), N, tmp.data());
+#pragma omp parallel
+    {
+        while (true) {
+            MatrixMultiply(A.data(), N, x.data(), tmp.data());
+#pragma omp barrier
+            VectorDifference(tmp.data(), b.data(), N, tmp.data());
+#pragma omp barrier
 
-        double norma = Norma(tmp.data(), N);
+            norm_sum[0] = 0;
 
-        VectorMultiplyConst(tmp.data(), t, N, multiply_tmp_const.data());
-        VectorDifference(x.data(), multiply_tmp_const.data(), N, x.data());
+            double norma = Norma(tmp.data(), N);
 
-        if (NormaCompare(norma, norma_b, x)) {
-            std::cout << "Norm: " << norma << '\n';
-            break;
+            VectorMultiplyConst(tmp.data(), t, N, multiply_tmp_const.data());
+
+#pragma omp barrier
+            VectorDifference(x.data(), multiply_tmp_const.data(), N, x.data());
+
+            if (NormaCompare(norma, norma_b, x)) {
+                break;
+            }
         }
     }
 }
